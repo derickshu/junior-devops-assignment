@@ -10,8 +10,8 @@ A simple chat application using WebSockets with Redis for message broadcasting a
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-username/redis-websocket-chat.git
-   cd redis-websocket-chat
+   git clone https://github.com/derickshu/junior-devops-assignment.git
+  
 
 
     ```bash
