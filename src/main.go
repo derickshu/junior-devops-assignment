@@ -38,23 +38,37 @@ var (
 	}
 )
 
+func initRedis(retries int) *redis.Client {
+	var rdb *redis.Client
+	for i := 0; i < retries; i++ {
+		rdb = redis.NewClient(&redis.Options{
+			Addr: os.Getenv("REDIS_URL"),
+		})
+		_, err := rdb.Ping().Result()
+		if err == nil {
+			return rdb
+		}
+		log.Printf("Failed to connect to Redis. Retrying in 2 seconds... (%d/%d)", i+1, retries)
+		time.Sleep(2 * time.Second)
+	}
+	log.Fatal("Could not connect to Redis after multiple attempts")
+	return nil
+}
+
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	// ensure connection close when function returns
 	defer ws.Close()
 	clients[ws] = true
 
-	// if it's zero, no messages were ever sent/saved
 	if rdb.Exists(RedisKey).Val() != 0 {
 		sendPreviousMessages(ws)
 	}
 
 	for {
 		var msg ChatMessage
-		// Read in a new message
 		err := ws.ReadJSON(&msg)
 		if err != nil {
 			delete(clients, ws)
@@ -68,12 +82,10 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 
 		msg.Timestamp = time.Now()
 
-		// send new message to redis PUB/SUB channel
 		if err := rdb.Publish(PubSubTopic, msg).Err(); err != nil {
 			panic(err)
 		}
 
-		// store message in redis list
 		storeInRedis(msg)
 	}
 }
@@ -84,7 +96,6 @@ func sendPreviousMessages(ws *websocket.Conn) {
 		panic(err)
 	}
 
-	// send previous messages
 	for _, chatMessage := range chatMessages {
 		var msg ChatMessage
 		if err := msg.FromJson(chatMessage); err != nil {
@@ -94,14 +105,12 @@ func sendPreviousMessages(ws *websocket.Conn) {
 	}
 }
 
-// If a message is sent while a client is closing, ignore the error
 func unsafeError(err error) bool {
 	return !websocket.IsCloseError(err, websocket.CloseGoingAway) && err != io.EOF
 }
 
 func handleMessages() {
 	for rmsg := range broadcaster.Channel() {
-		// grab any next message from channel
 		var msg ChatMessage
 		if err := msg.FromJson(rmsg.Payload); err != nil {
 			panic(err)
@@ -118,7 +127,6 @@ func storeInRedis(msg ChatMessage) {
 }
 
 func messageClients(msg ChatMessage) {
-	// send to every client currently connected
 	for client := range clients {
 		messageClient(client, msg)
 	}
@@ -126,7 +134,6 @@ func messageClients(msg ChatMessage) {
 
 func messageClient(client *websocket.Conn, msg ChatMessage) {
 	msg.Time = msg.Timestamp.Format(TimeFormat)
-
 	err := client.WriteJSON(msg)
 	if err != nil && unsafeError(err) {
 		log.Printf("error: %v", err)
@@ -149,12 +156,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 
-	redisURL := os.Getenv("REDIS_URL")
-	opt, err := redis.ParseURL(redisURL)
-	if err != nil {
-		panic(err)
-	}
-	rdb = redis.NewClient(opt)
+	rdb = initRedis(5)
 
 	b, err := os.ReadFile("secrets/users.json")
 	if err != nil {
