@@ -18,6 +18,7 @@ A simple chat application using WebSockets with Redis for message broadcasting a
     docker pull redis
     docker pull golang
     docker-compose up --build
+    sudo docker-compose down 
 
 
 * New Changes
